@@ -1,5 +1,5 @@
 echo:
-	cargo build --bin echo
+	cargo build --release --bin echo
 
 jsonth:
-	cargo build --bin jsonth
+	cargo build --release --bin jsonth
