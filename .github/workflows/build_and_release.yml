@@ -3,6 +3,7 @@ on:
   push: 
     branches: 
       - 'main'
+      - 'port-test-helpers'
 env:
   GH_TOKEN: ${{ github.token }}
 permissions:
