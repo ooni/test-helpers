@@ -518,6 +518,7 @@ dependencies = [
  "bytes",
  "env_logger",
  "http-body-util",
+ "httparse",
  "hyper",
  "hyper-util",
  "log",
