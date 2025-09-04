@@ -4,7 +4,7 @@ use std::default::Default;
 use anyhow::Result;
 use bytes::Bytes;
 use http_body_util::Full;
-use httparse::{EMPTY_HEADER, parse_headers, Status};
+use httparse::{EMPTY_HEADER, Status, parse_headers};
 use hyper::{Request, Response, StatusCode, header};
 use hyper::{server::conn::http1, service::service_fn};
 use hyper_util::rt::TokioIo;
@@ -44,11 +44,6 @@ async fn handle_json_helper(socket: TcpStream) {
     // Note that hyper can't give us the request line, so we parse it before
     // going to hyper
     let response = parse_line_and_headers(&socket).await;
-
-    if let Err(e) = response {
-        error!("Couldn't parse request line or header: {e}");
-        return;
-    };
 
     // Parse headers using hyper to parse the request.
     let io = TokioIo::new(socket);
@@ -101,7 +96,6 @@ async fn parse_line_and_headers(socket: &TcpStream) -> Result<JsonResponse, Stri
             // Parse request line
             let request_line = parse_line(&buffer[..n]).await?;
 
-
             // Start of headers is len of request line + 2 due to the \r\n terminator
             let start = request_line.len() + 2;
 
@@ -117,26 +111,24 @@ async fn parse_line_and_headers(socket: &TcpStream) -> Result<JsonResponse, Stri
     }
 }
 
-async fn parse_line(buffer : &[u8]) -> Result<String, String> {
-
+async fn parse_line(buffer: &[u8]) -> Result<String, String> {
     // Parse bytes as str
-    let line = match std::str::from_utf8(&buffer) {
+    let line = match std::str::from_utf8(buffer) {
         Ok(v) => v,
         Err(e) => return Err(format!("Unable to parse request line: {e}")),
     };
 
-    line
-    .split("\r\n")
-    .next()
-    .map(|s| s.to_string())
-    .ok_or("Bad http request".to_string())
+    line.split("\r\n")
+        .next()
+        .map(|s| s.to_string())
+        .ok_or("Bad http request".to_string())
 }
 
-fn parse_headers_list(buffer : &[u8]) -> Result<HashMap<String, Vec<String>>, String> {
+fn parse_headers_list(buffer: &[u8]) -> Result<HashMap<String, Vec<String>>, String> {
     let mut headers_dict: HashMap<String, Vec<String>> = HashMap::new();
     let mut headers_buff = [EMPTY_HEADER; 100];
 
-    let headers = match parse_headers(&buffer, &mut headers_buff) {
+    let headers = match parse_headers(buffer, &mut headers_buff) {
         Ok(Status::Complete((_, headers))) => headers,
         Ok(Status::Partial) => {
             return Err("Buffer too small to contain headers".into());
