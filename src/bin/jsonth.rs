@@ -78,7 +78,7 @@ async fn send_json_response(
         Ok(s) => s,
         Err(e) => {
             return make_error_response(
-                format!("Couldn't line or headers: {e}"),
+                format!("Couldn't parse line or headers: {e}"),
                 StatusCode::INTERNAL_SERVER_ERROR,
             );
         }
@@ -91,56 +91,22 @@ async fn send_json_response(
 async fn parse_line_and_headers(socket: &TcpStream) -> Result<JsonResponse, String> {
     // Recommended size for uri is 8000 octets, longest part of the request line
     // https://www.rfc-editor.org/rfc/rfc9110.html#name-uri-references
-    let mut buffer = [0u8; 8192];
+    // We also add more headspace to parse headers as well
+    let mut buffer = [0u8; 4 * 8192];
 
     // use peek to avoid consuming from the stream
     match socket.peek(&mut buffer).await {
         Ok(0) => Err("Connection closed unexpectedly".to_string()),
         Ok(n) => {
-            // Parse bytes as str
-            let line = match std::str::from_utf8(&buffer[..n]) {
-                Ok(v) => v,
-                Err(e) => return Err(format!("Unable to parse request line: {e}")),
-            };
-
             // Parse request line
-            let request_line = line
-                .split("\r\n")
-                .next()
-                .map(|s| s.to_string())
-                .ok_or("Bad http request".to_string())?;
-
-            let mut headers_dict: HashMap<String, Vec<String>> = HashMap::new();
+            let request_line = parse_line(&buffer[..n]).await?;
 
 
             // Start of headers is len of request line + 2 due to the \r\n terminator
             let start = request_line.len() + 2;
 
-            // Parse headers from buffer:
-            let mut headers_buff = [EMPTY_HEADER; 100];
-            let headers = match parse_headers(&buffer[start..], &mut headers_buff) {
-                Ok(Status::Complete((_, headers))) => headers,
-                Ok(Status::Partial) => {
-                    return Err("Buffer too small to parse headers".into());
-                }
-                Err(e) => return Err(e.to_string()),
-            };
-
-            // Parse header values
-            for header in headers.iter() {
-                let entry = headers_dict.entry(header.name.into()).or_default();
-
-                // Note that headers are not usually utf8, but every ascii header is valid utf8.
-                // We will note enforce it here, but hyper will when parsing the request
-                let value = match std::str::from_utf8(header.value) {
-                    Ok(v) => v.to_string(),
-                    Err(e) => {
-                        return Err(format!("Error parsing header, non-utf8 header found: {e}"));
-                    }
-                };
-
-                entry.push(value);
-            }
+            // Parse headers from buffer, starting after the request line:
+            let headers_dict = parse_headers_list(&buffer[start..])?;
 
             Ok(JsonResponse {
                 request_line,
@@ -149,6 +115,52 @@ async fn parse_line_and_headers(socket: &TcpStream) -> Result<JsonResponse, Stri
         }
         Err(e) => Err(format!("Unable to read from socket: {e}")),
     }
+}
+
+async fn parse_line(buffer : &[u8]) -> Result<String, String> {
+
+    // Parse bytes as str
+    let line = match std::str::from_utf8(&buffer) {
+        Ok(v) => v,
+        Err(e) => return Err(format!("Unable to parse request line: {e}")),
+    };
+
+    line
+    .split("\r\n")
+    .next()
+    .map(|s| s.to_string())
+    .ok_or("Bad http request".to_string())
+}
+
+fn parse_headers_list(buffer : &[u8]) -> Result<HashMap<String, Vec<String>>, String> {
+    let mut headers_dict: HashMap<String, Vec<String>> = HashMap::new();
+    let mut headers_buff = [EMPTY_HEADER; 100];
+
+    let headers = match parse_headers(&buffer, &mut headers_buff) {
+        Ok(Status::Complete((_, headers))) => headers,
+        Ok(Status::Partial) => {
+            return Err("Buffer too small to contain headers".into());
+        }
+        Err(e) => return Err(e.to_string()),
+    };
+
+    // Parse header values
+    for header in headers.iter() {
+        let entry = headers_dict.entry(header.name.into()).or_default();
+
+        // Note that headers are not usually utf8, but every ascii header is valid utf8.
+        // We will note enforce it here, but hyper will when parsing the request
+        let value = match std::str::from_utf8(header.value) {
+            Ok(v) => v.to_string(),
+            Err(e) => {
+                return Err(format!("Error parsing header, non-utf8 header found: {e}"));
+            }
+        };
+
+        entry.push(value);
+    }
+
+    Ok(headers_dict)
 }
 
 fn make_response(resp: &JsonResponse) -> Result<Response<Full<Bytes>>, hyper::Error> {
