@@ -1,30 +1,33 @@
-use log::{error, info};
-use test_helpers::helper_runner::{read_port, run_tcp_server};
-use tokio::{io, net::TcpStream};
+use log::{debug, error, info};
+use test_helpers::helper_runner::run_tcp_server;
+use tokio::{
+    io::{AsyncReadExt, AsyncWriteExt},
+    net::TcpStream,
+};
 
 #[tokio::main]
 async fn main() {
-    let port = read_port("8000");
-    run_tcp_server("echoth", &port, handle_tcp_echo).await;
+    run_tcp_server("echoth", "8000", handle_tcp_echo).await;
 }
 
 async fn handle_tcp_echo(mut stream: TcpStream) {
-    // For development, an easy way to test this function is starting the server and using telnet
-    // to send some data and check if the data comes back properly
-    //
-    // ```
-    // telnet localhost 8000
-    // ```
+    let mut buffer = [0u8; 4096];
     info!("Connection received");
-
-    let (mut reader, mut writer) = stream.split();
-
-    // Note that this function will get stucked here until the client closes the connection,
-    // continuosly sending the data it receives. This is expected.
-    let result = io::copy(&mut reader, &mut writer).await;
-    match result {
-        Ok(0) => info!("Connection closed"),
-        Ok(n) => info!("Received {n} bytes in total"),
-        Err(e) => error!("Error processing request: {e}"),
+    loop {
+        match stream.read(&mut buffer).await {
+            Ok(0) => {
+                info!("Connection closed");
+                break;
+            }
+            Ok(n) => {
+                debug!("Receiving {n} bytes");
+                if let Err(e) = stream.write_all(&buffer[0..n]).await {
+                    error!("Error trying to write response {e}");
+                }
+            }
+            Err(e) => {
+                error!("Error trying to read from request: {e}");
+            }
+        };
     }
 }
